@@ -24,10 +24,12 @@ We share our setup as a reference for teams running their own review infrastruct
 | Critical / High | Request changes | Gray |
 | Medium | Comment | Gray |
 | Low only / None | Approve* | Green |
+| No files selected | No approval | Green |
 | Incomplete review | No approval | Red |
 
 Low findings produce no finding comments. Earlier open findings still count.
-Approval requires complete coverage; GitHub's Actions job has its own status.
+Approval requires complete coverage of selected files; intentional exclusions
+do not fail CI. GitHub's Actions job has its own status.
 *GitHub prevents a bot from approving its own PR.*
 
 ## Connect related work

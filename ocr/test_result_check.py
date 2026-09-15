@@ -16,7 +16,7 @@ from test_review import BASE, HEAD, PATCHES, complete_result
 
 class ResultCheckTests(unittest.TestCase):
     def run_review(self, result=None, previous=None, author="developer", incomplete_context=False,
-                   error=None, reject_review=False, superseded=False):
+                   error=None, reject_review=False, superseded=False, patches=None):
         pr = {"state": "open", "base": {"sha": BASE, "repo": {"id": 42}},
               "head": {"sha": HEAD}, "user": {"login": author}}
         context = {"text": "{}", "snapshots": [], "warnings": [], "complete": not incomplete_context}
@@ -48,7 +48,8 @@ class ResultCheckTests(unittest.TestCase):
                 "OCR_BOT_TOKEN": "bot-token", "OCR_CHECK_TOKEN": "job-token",
             }))
             stack.enter_context(patch.object(review, "api", side_effect=api))
-            stack.enter_context(patch.object(review, "prepare_repository", return_value=(Path(temporary), BASE, PATCHES)))
+            stack.enter_context(patch.object(review, "prepare_repository", return_value=(
+                Path(temporary), BASE, PATCHES if patches is None else patches)))
             stack.enter_context(patch.object(finding_history, "load", return_value=(previous or {"findings": []}, 0)))
             stack.enter_context(patch.object(review.linked_prs, "load", return_value=context))
             stack.enter_context(patch.object(review.linked_prs, "unchanged", return_value=True))
@@ -75,6 +76,56 @@ class ResultCheckTests(unittest.TestCase):
             with self.subTest(author=author):
                 self.run_review(author=author)
                 self.check_result("success")
+
+    def test_23_of_24_changed_files_pass_when_all_23_selected_files_finish(self):
+        result = complete_result()
+        paths = [f"source-{number}.ts" for number in range(23)]
+        coverage = result["manifest"]["coverage"]
+        coverage["selected"] = [{"path": path} for path in paths]
+        coverage["completed"] = copy.deepcopy(coverage["selected"])
+        patches = dict.fromkeys(paths, PATCHES["example.py"])
+        patches["component.test.ts"] = "intentionally excluded test diff"
+        self.run_review(result, patches=patches)
+        self.check_result("success")
+        payload = next(call[2] for call in self.calls if call[0].endswith("/reviews"))
+        self.assertEqual(payload["event"], "APPROVE")
+        self.assertIn("23/23 selected files (24 changed; 1 excluded)", payload["body"])
+        self.assertNotIn("Review incomplete", payload["body"])
+
+    def test_zero_selected_files_pass_without_approval_or_resolving_history(self):
+        result = complete_result()
+        result["status"] = result["manifest"]["terminal_state"] = "skipped"
+        result["manifest"]["coverage"]["selected"] = []
+        result["manifest"]["coverage"]["completed"] = []
+        self.run_review(result)
+        self.check_result("success")
+        payload = next(call[2] for call in self.calls if call[0].endswith("/reviews"))
+        self.assertEqual(payload["event"], "COMMENT")
+        self.assertIn("No files selected", payload["body"])
+        item = finding_history.identify({"severity": "high", "content": "Earlier defect",
+                                        "path": "earlier.py", "start_line": 2}, [])
+        previous = finding_history.reconcile({"findings": []}, [item], 42, 1, "c" * 40, "old-input", True)
+        self.run_review(result, previous=previous)
+        self.check_result("neutral")
+        payload = next(call[2] for call in self.calls if call[0].endswith("/reviews"))
+        self.assertEqual(payload["event"], "REQUEST_CHANGES")
+
+    def test_missing_selected_file_still_fails_even_when_cli_says_complete(self):
+        result = complete_result()
+        result["manifest"]["coverage"]["completed"] = []
+        with self.assertRaises(RuntimeError):
+            self.run_review(result)
+        self.check_result("failure")
+
+    def test_excluded_file_does_not_resolve_an_existing_finding(self):
+        item = finding_history.identify({"severity": "high", "content": "Earlier defect",
+                                        "path": "component.test.ts", "start_line": 2}, [])
+        previous = finding_history.reconcile({"findings": []}, [item], 42, 1, "c" * 40, "old-input", True)
+        self.run_review(previous=previous, patches={**PATCHES, "component.test.ts": "excluded"})
+        self.check_result("neutral")
+        payload = next(call[2] for call in self.calls if call[0].endswith("/reviews"))
+        self.assertEqual(payload["event"], "REQUEST_CHANGES")
+        self.assertIn("Open: **1**", payload["body"])
 
     def test_high_and_critical_block_medium_comments_and_low_passes(self):
         for severity in ("critical", "high", "medium", "low"):

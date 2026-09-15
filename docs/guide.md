@@ -10,7 +10,9 @@ Automatic pull request reviews powered by [Alibaba's Open Code Review (OCR)](htt
 - Medium findings produce comments.
 - Low findings are ignored: no finding comments, history entries, or neutral check.
   A complete review with only low findings passes like a clean review.
-- Clean reviews approve only when the complete diff was reviewed.
+- Clean reviews approve only when all files selected by OCR were reviewed.
+- Intentional file exclusions do not fail CI. If OCR selects no files, CI passes
+  without automatic approval. Previously open findings on excluded files stay open.
 - The **OCR result** check is neutral (gray) when a complete review has open
   findings, successful (green) when none remain, and failed (red) when the review
   is incomplete or errors. Retained findings from earlier reviews also count.
@@ -107,6 +109,12 @@ as code fixes. An earlier unresolved critical/high finding still requests
 changes even if a same-input rerun reports no new findings. Resolution means
 the issue was not found in that complete new review, not that a separate repair
 test proved its absence.
+
+OCR's manifest defines the selected files. Coverage compares completed/reused
+files with that selected set, not every Git diff path. Summaries show selected,
+changed and excluded counts. A failed, waived or unfinished selected file still
+fails CI, as do invalid commit identities and finding-delivery errors. Excluding
+a file does not resolve or downgrade a previous finding on it.
 
 The latest 20 resolved records are retained subject to the review body limit;
 active findings are never silently discarded. Malformed or oversized active

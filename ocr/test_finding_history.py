@@ -69,6 +69,14 @@ class FindingHistoryTests(unittest.TestCase):
         state = history.reconcile(first, [high, low], 42, 1, NEXT, "new-input", True)
         self.assertEqual(state["findings"][0]["severity"], "high")
 
+    def test_excluded_file_cannot_downgrade_a_blocking_finding(self):
+        first = state_with_finding()
+        key = first["findings"][0]["id"]
+        medium = history.identify({**finding(f"[OCR-ID:{key}] Same issue"), "severity": "medium"}, first["findings"])
+        state = history.reconcile(first, [medium], 42, 1, NEXT, "new-input", True,
+                                  excluded_paths={"example.py"})
+        self.assertEqual(state["findings"][0]["severity"], "high")
+
     def test_a_complete_retry_can_resolve_a_fix_not_verified_by_a_partial_run(self):
         first = state_with_finding()
         partial = history.reconcile(first, [], 42, 1, NEXT, "new-input", False)

@@ -121,7 +121,7 @@ class ReviewPolicyTests(unittest.TestCase):
         for result in variants:
             with self.subTest(result=result):
                 self.assertEqual(self.payload(result)[0]["event"], "COMMENT")
-        self.assertFalse(self.payload(patches={**PATCHES, "unselected.png": "binary"})[1])
+        self.assertTrue(self.payload(patches={**PATCHES, "unselected.png": "binary"})[1])
         self.assertFalse(self.payload(exit_code=1)[1])
 
     def test_invalid_line_is_retained_in_summary(self):
@@ -132,6 +132,18 @@ class ReviewPolicyTests(unittest.TestCase):
             payload, _ = self.payload(result)
             self.assertEqual(payload["comments"], [])
             self.assertIn("Do not lose this finding", payload["body"])
+
+    def test_complete_manifest_cannot_claim_files_outside_the_pr(self):
+        result = complete_result()
+        for field in ("selected", "completed"):
+            result["manifest"]["coverage"][field] = [{"path": "unrelated.py"}]
+        self.assertFalse(self.payload(result)[1])
+
+    def test_zero_selection_requires_an_explicit_skipped_result(self):
+        result = complete_result()
+        for field in ("selected", "completed"):
+            result["manifest"]["coverage"][field] = []
+        self.assertFalse(self.payload(result)[1])
 
     def test_unknown_severity_or_missing_comments_is_an_error(self):
         result = complete_result()

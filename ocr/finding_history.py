@@ -160,7 +160,7 @@ def background(state):
             "Do not report a fixed problem merely to acknowledge it. Do not invent IDs for new problems.")
 
 
-def reconcile(previous, comments, repository_id, number, head, input_id, complete):
+def reconcile(previous, comments, repository_id, number, head, input_id, complete, excluded_paths=()):
     """Resolve absent findings only after a complete review of changed evidence."""
     records = {item["id"]: copy.deepcopy(item) for item in previous.get("findings", [])
                if item["severity"] != "low"}
@@ -176,7 +176,8 @@ def reconcile(previous, comments, repository_id, number, head, input_id, complet
         severity = comment["severity"]
         content = comment["content"]
         changed = input_id != old.get("last_seen_input") if old.get("last_seen_input") else head != old.get("last_seen_head")
-        if (key in observed or (old.get("state") == "open" and (not complete or not changed))):
+        verified = complete and comment.get("path", "") not in excluded_paths
+        if (key in observed or (old.get("state") == "open" and (not verified or not changed))):
             if RANK.get(old.get("severity"), -1) > RANK[severity]:
                 severity = old["severity"]
                 content = old["content"]
@@ -190,7 +191,8 @@ def reconcile(previous, comments, repository_id, number, head, input_id, complet
                         "reopened_count": old.get("reopened_count", 0) + int(old.get("state") == "resolved")}
     for key, item in records.items():
         changed = input_id != item["last_seen_input"] if item.get("last_seen_input") else head != item["last_seen_head"]
-        if key not in observed and item["state"] == "open" and complete and changed:
+        if (key not in observed and item["state"] == "open" and complete and changed
+                and item["path"] not in excluded_paths):
             item.update(state="resolved", resolved_head=head, reopened=False, resolved_sequence=sequence)
     active = [item for item in records.values() if item["state"] == "open"]
     resolved = sorted((item for item in records.values() if item["state"] == "resolved"),

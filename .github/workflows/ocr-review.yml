@@ -18,7 +18,7 @@ jobs:
       group: ocr-${{ github.repository }}-${{ github.event.pull_request.number || github.event.inputs.pull_request_number }}
       cancel-in-progress: true
     steps:
-      - name: Review the complete PR diff as altinkaya-bot
+      - name: Review the selected PR files as altinkaya-bot
         uses: altinkaya-opensource/altinkaya-open-code-review/ocr@latest
         env:
           OCR_CHECK_TOKEN: ${{ github.token }}
