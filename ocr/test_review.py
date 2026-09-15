@@ -1,6 +1,7 @@
 """Regression checks for authorization, coverage policy, and GitHub diff positions."""
 
 import copy
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -136,12 +137,68 @@ class ReviewPolicyTests(unittest.TestCase):
         self.assertIn("Defect 50", payload["body"])
 
     def test_sandbox_has_no_host_home_or_root_mount(self):
-        command = review.sandbox_command(Path("/tmp/repo"), Path("/tmp/out"), Path("/tmp/action"), BASE, HEAD)
+        command = review.sandbox_command(
+            Path("/tmp/repo"), Path("/tmp/out"), Path("/tmp/action"), BASE, HEAD, Path("/tmp/config.json"),
+        )
         self.assertNotIn("/root", command)
         self.assertNotIn("/home/ocr-runner", command)
         self.assertNotIn("/", command)
         self.assertIn("--unshare-all", command)
         self.assertIn("--die-with-parent", command)
+
+    def test_failed_comment_submission_never_approves_complete_coverage(self):
+        for tool_calls in (
+            {"failure_by_tool": {"code_comment": 1}},
+            {"failure_details": [{"tool_name": "code_comment", "arguments": "{}"}]},
+        ):
+            result = complete_result()
+            result["tool_calls"] = tool_calls
+            payload, complete = self.payload(result)
+            self.assertFalse(complete)
+            self.assertEqual(payload["event"], "COMMENT")
+            self.assertIn("failed finding submission", payload["body"])
+
+    def test_exploratory_search_failure_does_not_imply_lost_findings(self):
+        result = complete_result()
+        result["tool_calls"] = {
+            "failure_by_tool": {"code_search": 1},
+            "failure_details": [{"tool_name": "code_search"}],
+        }
+        self.assertEqual(self.payload(result)[0]["event"], "APPROVE")
+
+
+class ReasoningConfigTests(unittest.TestCase):
+    def test_supported_values_reach_config_without_writing_credentials(self):
+        for effort in ("minimal", "low", "medium", "high", "max", " HIGH ", ""):
+            with self.subTest(effort=effort), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "config.json").write_text('{"language":"English","telemetry":{"enabled":false}}')
+                env = {"OCR_LLM_URL": "https://api.example.invalid/v1", "OCR_LLM_MODEL": "test-model",
+                       "OCR_LLM_TOKEN": "test-secret-do-not-persist", "OCR_LLM_REASONING_EFFORT": effort}
+                with patch.dict(os.environ, env):
+                    review.write_ocr_config(root, root / "effective.json")
+                text = (root / "effective.json").read_text()
+                config = json.loads(text)
+                self.assertNotIn(env["OCR_LLM_TOKEN"], text)
+                self.assertNotIn("auth_token", config["llm"])
+                self.assertEqual(config["llm"]["auth_token_cmd"], 'printf "%s" "$OCR_LLM_TOKEN"')
+                self.assertEqual(config["llm"]["url"], env["OCR_LLM_URL"])
+                self.assertEqual(config["llm"]["model"], env["OCR_LLM_MODEL"])
+                self.assertFalse(config["llm"]["use_anthropic"])
+                self.assertEqual(config["language"], "English")
+                self.assertFalse(config["telemetry"]["enabled"])
+                if effort.strip():
+                    self.assertEqual(config["llm"]["extra_body"]["reasoning_effort"], effort.strip().lower())
+                else:
+                    self.assertNotIn("extra_body", config["llm"])
+
+    def test_invalid_effort_fails_before_writing_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "effective.json"
+            with patch.dict(os.environ, {"OCR_LLM_REASONING_EFFORT": "unsupported"}):
+                with self.assertRaises(ValueError):
+                    review.write_ocr_config(Path(temporary), destination)
+            self.assertFalse(destination.exists())
 
 
 class EventTests(unittest.TestCase):
