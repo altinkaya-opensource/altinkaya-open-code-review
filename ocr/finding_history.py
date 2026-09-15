@@ -168,18 +168,20 @@ def reconcile(previous, comments, repository_id, number, head, input_id, complet
         key = comment["finding_id"]
         old = records.get(key, {})
         severity = comment["severity"]
+        content = comment["content"]
         changed = input_id != old.get("last_seen_input") if old.get("last_seen_input") else head != old.get("last_seen_head")
         if (key in observed or (old.get("state") == "open" and (not complete or not changed))):
             if RANK.get(old.get("severity"), -1) > RANK[severity]:
                 severity = old["severity"]
+                content = old["content"]
         observed.add(key)
         if old.get("state") == "resolved":
             reopened.add(key)
-        records[key] = {"id": key, "path": comment.get("path", ""), "content": comment["content"],
+        records[key] = {"id": key, "path": comment.get("path", ""), "content": content,
                         "severity": severity, "state": "open",
                         "first_seen_head": old.get("first_seen_head", head), "last_seen_head": head,
                         "last_seen_input": input_id, "reopened": key in reopened,
-                        "reopened_count": old.get("reopened_count", 0) + int(key in reopened)}
+                        "reopened_count": old.get("reopened_count", 0) + int(old.get("state") == "resolved")}
     for key, item in records.items():
         changed = input_id != item["last_seen_input"] if item.get("last_seen_input") else head != item["last_seen_head"]
         if key not in observed and item["state"] == "open" and complete and changed:

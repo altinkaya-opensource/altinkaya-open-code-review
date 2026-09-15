@@ -63,6 +63,17 @@ class FindingHistoryTests(unittest.TestCase):
         other = history.identify(finding(f"[OCR-ID:{key}] Different issue", "other.py"), first["findings"])
         self.assertNotEqual(other["finding_id"], key)
 
+    def test_duplicate_reports_reopen_once_and_retain_the_stronger_evidence(self):
+        first = state_with_finding()
+        fixed = history.reconcile(first, [], 42, 1, NEXT, "fixed", True)
+        key = first["findings"][0]["id"]
+        strong = history.identify(finding(f"[OCR-ID:{key}] Strong evidence"), fixed["findings"])
+        weak = history.identify({**finding(f"[OCR-ID:{key}] Weaker claim"), "severity": "low"}, fixed["findings"])
+        state = history.reconcile(fixed, [strong, weak], 42, 1, "d" * 40, "regressed", True)
+        self.assertEqual(state["findings"][0]["reopened_count"], 1)
+        self.assertEqual(state["findings"][0]["severity"], "high")
+        self.assertEqual(state["findings"][0]["content"], "Strong evidence")
+
     def test_state_authorship_and_scope(self):
         state = state_with_finding()
         body = history.append_state("Review", state)
