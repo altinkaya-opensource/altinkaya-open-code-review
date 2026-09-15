@@ -3,6 +3,7 @@
 Automatic pull request reviews powered by [Alibaba's Open Code Review (OCR)](https://github.com/alibaba/open-code-review).
 
 - Reviews run when a pull request is opened, reopened, or updated.
+- Closing or merging a PR cancels its pending/running review.
 - Critical and high findings request changes.
 - Medium and low findings produce comments.
 - Clean reviews approve only when the complete diff was reviewed.
@@ -11,6 +12,66 @@ Automatic pull request reviews powered by [Alibaba's Open Code Review (OCR)](htt
   Missing metrics are omitted. Cache hit rate is reported cached input divided by
   total input, using OpenAI-compatible token accounting; OCR duration excludes
   workflow queue and repository checkout time.
+
+## Related pull requests
+
+Link a PR in the same organization from the PR description, or use explicit
+declarations (short repository names use the configured organization):
+
+```text
+Related-PR: example-api#123
+Depends-On: #45
+```
+
+Full GitHub PR URLs are also recognized. Ordinary links to external upstream
+changelogs are ignored; explicitly declared external dependencies are reported
+as unsupported. Self-links are ignored and links are not followed recursively.
+
+The review receives the target description and each linked PR's description,
+state, frozen commit identities and diff. Up to five direct links fit in a
+bounded context budget. Missing, denied or truncated dependency diffs prevent
+automatic approval. Private source is never supplied to a public PR; private
+cross-repository context also requires the target PR author to have read access
+to the source repository. Only link private repositories whose content may be
+discussed in the consuming private PR.
+
+Editing a PR description reruns its review. Updates and closure of a linked PR
+refresh its directly dependent open PRs through `workflow_dispatch`; dispatched
+reviews do not fan out again, preventing cycles. This reads current open PR
+declarations instead of relying on a delayed search index. Disabled or missing
+OCR workflows are skipped. A related revision changing during analysis discards
+the stale result and queues a fresh review.
+
+The caller must subscribe to `edited` and declare the `workflow_dispatch` string
+input `pull_request_number`, as shown in `automatic-ocr-review.yml`. The input
+can also be used to request a fresh review manually.
+
+## Finding history
+
+OCR reads its previous GitHub reviews before each analysis. Only reviews
+authenticated as the configured bot account are accepted. Existing reviews in
+the older OCR format are imported, including inline findings. Structured state
+is carried in an encoded marker in each new review; no separate database or
+issue comment is required. Encoding is not encryption: state has the same
+visibility as the PR review.
+
+Previous findings are supplied to the model with stable IDs. The model can
+reuse an ID when describing the same issue differently; matching also falls
+back to the file path and normalized finding text. Each review shows open
+findings and a collapsed resolved section; a returning finding is marked reopened.
+
+An absent finding resolves only after a complete review of changed code or
+dependency evidence. Same-input reruns and incomplete reviews do not close
+findings or downgrade blocking severity. Description-only edits do not count
+as code fixes. An earlier unresolved critical/high finding still requests
+changes even if a same-input rerun reports no new findings. Resolution means
+the issue was not found in that complete new review, not that a separate repair
+test proved its absence.
+
+The latest 20 resolved records are retained subject to the review body limit;
+active findings are never silently discarded. Malformed or oversized active
+history prevents automatic approval. Finding history survives runner cache
+cleanup because it is stored in GitHub reviews.
 
 ## Model reasoning
 

@@ -10,11 +10,11 @@ permissions:
   contents: read
 jobs:
   review:
-    if: github.event_name == 'pull_request_target' && github.repository_owner == 'altinkaya-opensource'
+    if: (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && github.repository_owner == 'altinkaya-opensource'
     runs-on: [self-hosted, linux, x64, ocr]
     timeout-minutes: 60
     concurrency:
-      group: ocr-${{ github.repository }}-${{ github.event.pull_request.number }}
+      group: ocr-${{ github.repository }}-${{ github.event.pull_request.number || github.event.inputs.pull_request_number }}
       cancel-in-progress: true
     steps:
       - name: Review the complete PR diff as altinkaya-bot

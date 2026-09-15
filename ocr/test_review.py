@@ -283,6 +283,34 @@ class MetricsTests(unittest.TestCase):
 
 
 class EventTests(unittest.TestCase):
+    def test_dispatched_review_does_not_fan_out_again(self):
+        pr = {"state": "closed", "base": {"sha": BASE, "repo": {"id": 42}},
+              "head": {"sha": HEAD}, "user": {"login": "developer"}}
+        with tempfile.TemporaryDirectory() as temporary:
+            event = Path(temporary) / "event.json"
+            event.write_text(json.dumps({"inputs": {"pull_request_number": "1"}}))
+            env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_EVENT_PATH": str(event),
+                   "GITHUB_REPOSITORY": "altinkaya-opensource/test", "OCR_BOT_TOKEN": "test-only"}
+            with patch.dict(os.environ, env), patch.object(review, "api", side_effect=[{"login": review.BOT, "id": 7}, pr]), \
+                    patch.object(review.dependent_reviews, "refresh") as refresh, patch.object(review, "run_ocr") as run:
+                review.main()
+                refresh.assert_not_called()
+                run.assert_not_called()
+
+    def test_closed_pr_still_refreshes_dependents_without_starting_an_llm(self):
+        pr = {"state": "closed", "base": {"sha": BASE, "repo": {"id": 42}},
+              "head": {"sha": HEAD}, "user": {"login": "developer"}}
+        with tempfile.TemporaryDirectory() as temporary:
+            event = Path(temporary) / "event.json"
+            event.write_text(json.dumps({"pull_request": {"number": 1, "head": {"sha": HEAD}}}))
+            env = {"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_EVENT_PATH": str(event),
+                   "GITHUB_REPOSITORY": "altinkaya-opensource/test", "OCR_BOT_TOKEN": "test-only"}
+            with patch.dict(os.environ, env), patch.object(review, "api", side_effect=[{"login": review.BOT, "id": 7}, pr]), \
+                    patch.object(review.dependent_reviews, "refresh", return_value=1) as refresh, patch.object(review, "run_ocr") as run:
+                review.main()
+                refresh.assert_called_once()
+                run.assert_not_called()
+
     def test_non_pr_target_events_fail_before_network_access(self):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "issue_comment"}):
             with patch.object(review, "api") as api:
@@ -301,10 +329,14 @@ class EventTests(unittest.TestCase):
             env = {"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_EVENT_PATH": str(event_file),
                    "GITHUB_REPOSITORY": "altinkaya-opensource/test", "OCR_BOT_TOKEN": "test-only",
                    "GITHUB_RUN_ID": "123", "OCR_ACTION_PATH": temporary}
-            with patch.dict(os.environ, env), patch.object(review, "api", side_effect=[{"login": review.BOT}, pr, current]) as api:
-                with patch.object(review, "prepare_repository", return_value=(Path(temporary), BASE, PATCHES)):
-                    with patch.object(review, "run_ocr", return_value=(complete_result(), 0)):
-                        review.main()
+            context = {"text": "{}", "snapshots": [], "warnings": [], "complete": True}
+            with patch.dict(os.environ, env), patch.object(review, "api", side_effect=[{"login": review.BOT, "id": 7}, pr, current]) as api:
+                with patch.object(review, "prepare_repository", return_value=(Path(temporary), BASE, PATCHES)), \
+                        patch.object(review.dependent_reviews, "refresh", return_value=0), \
+                        patch.object(review.finding_history, "load", return_value=({"findings": []}, 0)), \
+                        patch.object(review.linked_prs, "load", return_value=context), \
+                        patch.object(review, "run_ocr", return_value=(complete_result(), 0)):
+                    review.main()
             self.assertEqual(api.call_count, 3)
             self.assertTrue(all(len(call.args) == 2 for call in api.call_args_list))
 
