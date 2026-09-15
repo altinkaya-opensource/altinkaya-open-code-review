@@ -340,10 +340,14 @@ def review_payload(result, exit_code, patches, base, head, author, run_url):
     inline = []
     unpositioned = []
     blocking = False
+    finding_count = 0
     for comment in comments:
         severity = comment.get("severity", "").lower()
         if severity not in SEVERITIES or not isinstance(comment.get("content"), str):
             raise ValueError("Invalid OCR finding; refusing to infer a clean review")
+        if severity == "low":
+            continue
+        finding_count += 1
         blocking |= severity in {"critical", "high"}
         body = f"**{severity.upper()}**\n\n{comment['content']}"
         path = comment.get("path", "")
@@ -353,21 +357,21 @@ def review_payload(result, exit_code, patches, base, head, author, run_url):
         else:
             unpositioned.append(f"### {path or 'Unpositioned finding'}\n\n{body}")
     event = "REQUEST_CHANGES" if blocking else "COMMENT"
-    if complete and not comments:
+    if complete and not finding_count:
         event = "APPROVE"
     if author == BOT:
         event = "COMMENT"  # GitHub disallows approving/requesting changes on one's own PR.
     summary = (
         f"## Open Code Review\n\n"
         f"Commit: `{head}`\n\n"
-        f"Coverage: {len(covered)}/{len(patches)} changed files. Findings: {len(comments)}.\n\n"
+        f"Coverage: {len(covered)}/{len(patches)} changed files. Findings: {finding_count}.\n\n"
     )
     if not complete:
         summary += "**Review incomplete — no automatic approval.**\n\n"
         summary += incomplete_diagnostics(result, exit_code) + ".\n\n"
         if delivery_failed:
             summary += "OCR reported a failed finding submission; delivery could not be verified.\n\n"
-    elif not comments:
+    elif not finding_count:
         summary += "No actionable findings detected.\n\n"
     if author == BOT:
         summary += "The PR author is altinkaya-bot; GitHub requires another account for approval.\n\n"
@@ -387,6 +391,7 @@ def tracked_payload(result, exit_code, patches, base, head, author, run_url, pre
     if "comments" not in result or (result["comments"] is not None and not isinstance(result["comments"], list)):
         raise ValueError("OCR comments must be present as an array or null")
     comments = [finding_history.identify(item, previous.get("findings", [])) for item in result["comments"] or []]
+    comments = [item for item in comments if item["severity"] != "low"]
     result = {**result, "comments": comments}
     payload, covered = review_payload(result, exit_code, patches, base, head, author, run_url)
     complete = covered and context["complete"]

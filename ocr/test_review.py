@@ -52,7 +52,7 @@ class ReviewPolicyTests(unittest.TestCase):
         self.assertEqual(self.payload(result)[0]["event"], "COMMENT")
 
     def test_each_severity_and_inline_position(self):
-        for severity in ("critical", "high", "medium", "low"):
+        for severity in ("critical", "high", "medium"):
             with self.subTest(severity=severity):
                 result = complete_result()
                 result["comments"] = [{"severity": severity, "content": "Concrete defect",
@@ -63,6 +63,29 @@ class ReviewPolicyTests(unittest.TestCase):
                 self.assertEqual(payload["event"], expected)
                 self.assertEqual(payload["comments"][0]["line"], 2)
                 self.assertEqual(payload["comments"][0]["side"], "RIGHT")
+
+    def test_low_findings_are_omitted_from_inline_and_summary_comments(self):
+        for severity in ("low", "LOW"):
+            result = complete_result()
+            result["comments"] = [
+                {"severity": severity, "content": "Minor issue", "path": "example.py", "start_line": line}
+                for line in (2, 99)
+            ]
+            payload, complete = self.payload(result)
+            self.assertTrue(complete)
+            self.assertEqual(payload["event"], "APPROVE")
+            self.assertEqual(payload["comments"], [])
+            self.assertIn("Findings: 0.", payload["body"])
+            self.assertNotIn("Minor issue", payload["body"])
+
+    def test_only_low_findings_do_not_hide_incomplete_coverage(self):
+        result = complete_result()
+        result["status"] = "partial"
+        result["comments"] = [{"severity": "low", "content": "Minor issue", "path": "example.py"}]
+        payload, complete = self.payload(result)
+        self.assertFalse(complete)
+        self.assertEqual(payload["event"], "COMMENT")
+        self.assertNotIn("Minor issue", payload["body"])
 
     def test_incomplete_exit_zero_cannot_approve(self):
         result = complete_result()

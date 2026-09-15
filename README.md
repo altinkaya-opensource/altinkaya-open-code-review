@@ -5,7 +5,9 @@ Automatic pull request reviews powered by [Alibaba's Open Code Review (OCR)](htt
 - Reviews run when a pull request is opened, reopened, or updated.
 - Closing or merging a PR cancels its pending/running review.
 - Critical and high findings request changes.
-- Medium and low findings produce comments.
+- Medium findings produce comments.
+- Low findings are ignored: no finding comments, history entries, or neutral check.
+  A complete review with only low findings passes like a clean review.
 - Clean reviews approve only when the complete diff was reviewed.
 - The **OCR result** check is neutral (gray) when a complete review has open
   findings, successful (green) when none remain, and failed (red) when the review
@@ -82,6 +84,9 @@ The latest 20 resolved records are retained subject to the review body limit;
 active findings are never silently discarded. Malformed or oversized active
 history prevents automatic approval. Finding history survives runner cache
 cleanup because it is stored in GitHub reviews.
+
+Low findings from earlier reviews are excluded from future context and history;
+they are not labelled as fixed. Existing published comments are left in place.
 
 ## Model reasoning
 

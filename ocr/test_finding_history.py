@@ -20,6 +20,24 @@ def state_with_finding():
 
 
 class FindingHistoryTests(unittest.TestCase):
+    def test_old_low_findings_are_not_sent_back_to_the_model(self):
+        state = state_with_finding()
+        state["findings"][0]["severity"] = "low"
+        body = history.append_state("Review", state)
+        rows = [{"id": 11, "user": {"id": BOT_ID}, "commit_id": HEAD,
+                 "body": body, "state": "COMMENTED"}]
+        loaded, revision = history.load("/pulls/1", 42, 1, lambda _: rows, BOT_ID)
+        self.assertEqual(revision, 11)
+        self.assertEqual(loaded["findings"], [])
+        self.assertNotIn("A concrete bug", history.background(loaded))
+
+    def test_low_findings_are_not_retained_as_open_or_resolved(self):
+        previous = state_with_finding()
+        previous["findings"][0]["severity"] = "low"
+        low = history.identify({**finding(), "severity": "low"}, previous["findings"])
+        state = history.reconcile(previous, [low], 42, 1, HEAD, "old-input", True)
+        self.assertEqual(state["findings"], [])
+
     def test_open_fixed_and_reopened_with_reworded_content(self):
         first = state_with_finding()
         key = first["findings"][0]["id"]

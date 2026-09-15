@@ -76,16 +76,42 @@ class ResultCheckTests(unittest.TestCase):
                 self.run_review(author=author)
                 self.check_result("success")
 
-    def test_all_finding_severities_are_neutral_but_only_high_and_critical_block(self):
+    def test_high_and_critical_block_medium_comments_and_low_passes(self):
         for severity in ("critical", "high", "medium", "low"):
             with self.subTest(severity=severity):
                 result = complete_result()
                 result["comments"] = [{"severity": severity, "content": "A concrete defect",
                                        "path": "example.py", "start_line": 2}]
                 self.run_review(result)
-                self.check_result("neutral")
+                self.check_result("success" if severity == "low" else "neutral")
                 payload = next(call[2] for call in self.calls if call[0].endswith("/reviews"))
-                self.assertEqual(payload["event"], "REQUEST_CHANGES" if severity in {"critical", "high"} else "COMMENT")
+                expected = "REQUEST_CHANGES" if severity in {"critical", "high"} else "COMMENT"
+                self.assertEqual(payload["event"], "APPROVE" if severity == "low" else expected)
+                if severity == "low":
+                    self.assertEqual(payload["comments"], [])
+                    self.assertNotIn("A concrete defect", payload["body"])
+
+    def test_mixed_findings_publish_only_medium_and_above(self):
+        result = complete_result()
+        result["comments"] = [{"severity": severity, "content": f"{severity} issue",
+                               "path": "example.py", "start_line": 2}
+                              for severity in ("low", "medium")]
+        self.run_review(result)
+        self.check_result("neutral")
+        payload = next(call[2] for call in self.calls if call[0].endswith("/reviews"))
+        self.assertEqual(payload["event"], "COMMENT")
+        self.assertEqual(len(payload["comments"]), 1)
+        self.assertIn("**MEDIUM**", payload["comments"][0]["body"])
+        self.assertNotIn("low issue", payload["body"])
+
+    def test_previous_low_finding_does_not_keep_a_complete_review_neutral(self):
+        finding = finding_history.identify({"severity": "high", "content": "Old minor issue",
+                                            "path": "example.py", "start_line": 2}, [])
+        previous = finding_history.reconcile({"findings": []}, [finding], 42, 1, HEAD, "same-input", True)
+        previous["findings"][0]["severity"] = "low"
+        self.run_review(previous=previous)
+        self.check_result("success")
+
 
     def test_old_open_findings_count_but_resolved_findings_do_not(self):
         pr = {"head": {"sha": HEAD}, "base": {"sha": BASE, "repo": {"id": 42}}}

@@ -134,6 +134,9 @@ def load(pr_path, repository_id, number, request, bot_id):
         identified = [identify(comment, state["findings"]) for comment in comments]
         state = reconcile(state, identified, repository_id, number, item["commit_id"], "", complete)
         revision = item["id"]
+    # Earlier reviews may contain low findings; the current policy ignores them,
+    # rather than claiming they were fixed or resupplying them to the model.
+    state["findings"] = [item for item in state["findings"] if item["severity"] != "low"]
     return state, revision
 
 
@@ -159,12 +162,15 @@ def background(state):
 
 def reconcile(previous, comments, repository_id, number, head, input_id, complete):
     """Resolve absent findings only after a complete review of changed evidence."""
-    records = {item["id"]: copy.deepcopy(item) for item in previous.get("findings", [])}
+    records = {item["id"]: copy.deepcopy(item) for item in previous.get("findings", [])
+               if item["severity"] != "low"}
     for item in records.values():
         item["reopened"] = False
     sequence = previous.get("sequence", 0) + 1
     observed, reopened = set(), set()
     for comment in comments:
+        if comment["severity"] == "low":
+            continue
         key = comment["finding_id"]
         old = records.get(key, {})
         severity = comment["severity"]
