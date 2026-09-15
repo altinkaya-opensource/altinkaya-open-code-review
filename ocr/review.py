@@ -1,16 +1,20 @@
 """Organization PR reviews; only trusted CI code executes outside the sandbox."""
 
 import base64
+from collections import Counter
+import fcntl
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
 from ocr_binary import resolve_binary
+import repository_cache
 
 
 API = "https://api.github.com"
@@ -81,14 +85,34 @@ def added_lines(patch):
     return result
 
 
-def prepare_repository(root, repository, base, head, token):
+def prepare_repository(root, repository, base, head, token, repository_id, cache_root=None):
     """Fetch exact commits and materialize blobs before removing network credentials."""
+    if type(repository_id) is not int or repository_id <= 0:
+        raise ValueError("Invalid repository identity")
+    started = time.monotonic()
+    cache_root = cache_root or Path.home() / ".cache" / "ocr" / "repositories"
+    cache_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # GitHub's numeric identity avoids reusing data from a deleted/recreated repo.
+    cache = cache_root / f"{repository_id}.git"
+    cache.mkdir(exist_ok=True, mode=0o700)
     repo = root / "repository"
     repo.mkdir()
     git(repo, "init", "--quiet")
     git(repo, "remote", "add", "origin", f"https://github.com/{repository}.git")
-    git(repo, "fetch", "--quiet", "--no-tags", "--filter=blob:none", "--depth=100",
-        "origin", base, head, token=token)
+    with (cache_root / f"{repository_id}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        refs = repository_cache.restore(cache, repo, repository, git)
+        if refs != {"base": base, "head": head}:
+            git(repo, "fetch", "--quiet", "--no-tags", "--filter=blob:none", "--depth=100",
+                "origin", base, head, token=token)
+        merge_base, patches = materialize_repository(repo, base, head, token)
+        repository_cache.save(cache, repo, base, head, git)
+    print(f"Git cache: {'warm' if refs else 'cold'}; preparation {time.monotonic() - started:.1f}s")
+    return repo, merge_base, patches
+
+
+def materialize_repository(repo, base, head, token):
+    """Load all head and diff blobs while GitHub authentication is still available."""
     for deepen in (0, 200, 800, 3200):
         if deepen:
             git(repo, "fetch", "--quiet", "--no-tags", f"--deepen={deepen}",
@@ -108,7 +132,7 @@ def prepare_repository(root, repository, base, head, token):
         for path in paths if path
     }
     # The read-only sandbox has no GitHub token. All head and diff blobs are now local.
-    return repo, merge_base, patches
+    return merge_base, patches
 
 
 def sandbox_command(repo, output, action, base, head, config_path, binary_path):
@@ -177,6 +201,7 @@ def run_ocr(repo, output, action, base, head):
         )
     result_file = output / "review.json"
     if not result_file.is_file():
+        save_failure_report({"status": "failed"}, result.returncode, output)
         raise RuntimeError(f"OCR produced no JSON result (exit {result.returncode})")
     return json.loads(result_file.read_text()), result.returncode
 
@@ -206,6 +231,68 @@ def review_metrics(result):
         duration = (f"{hours}h " if hours else "") + (f"{minutes}m " if minutes else "") + f"{seconds}s"
         parts.append(f"OCR time **{duration}**")
     return "---\n**Metrics:** " + " · ".join(parts) if parts else ""
+
+
+def incomplete_diagnostics(result, exit_code):
+    """Expose typed failure metadata without provider errors, source, paths, or tool arguments."""
+    manifest = result.get("manifest") or {}
+    coverage = manifest.get("coverage") or {}
+    states = {"complete", "partial", "failed", "skipped", "cancelled"}
+    classes = {"provider", "timeout", "cancelled", "configuration", "input", "budget", "panic", "internal", "unknown"}
+    status = result.get("status")
+    terminal = manifest.get("terminal_state")
+    details = [f"OCR exit: {exit_code}",
+               f"status: {status if isinstance(status, str) and status in states else 'unknown'}",
+               f"terminal state: {terminal if isinstance(terminal, str) and terminal in states else 'unknown'}"]
+    failure = manifest.get("run_failure") or {}
+    if failure:
+        category = failure.get("classification")
+        details.append(f"run failure: {category if isinstance(category, str) and category in classes else 'unknown'}")
+    failures = Counter(
+        item.get("classification") if isinstance(item.get("classification"), str) and item.get("classification") in classes else "unknown"
+        for item in coverage.get("failed") or [] if isinstance(item, dict)
+    )
+    if failures:
+        details.append("failed files: " + ", ".join(f"{key}={value}" for key, value in sorted(failures.items())))
+    waived = coverage.get("waived") or []
+    if waived:
+        details.append(f"waived files: {len(waived)}")
+    return "; ".join(details)
+
+
+def save_failure_report(result, exit_code, output):
+    """Keep failure evidence private on the runner; never upload raw errors or source."""
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    if not run_id.isdigit() or not attempt.isdigit():
+        return
+    manifest = result.get("manifest") or {}
+    report = {
+        "exit_code": exit_code, "status": result.get("status"),
+        "terminal_state": manifest.get("terminal_state"),
+        "run_failure": manifest.get("run_failure"),
+        "failed_files": (manifest.get("coverage") or {}).get("failed"),
+        "tool_failures": [
+            {key: item.get(key) for key in ("tool_name", "file_path", "error")}
+            for item in (result.get("tool_calls") or {}).get("failure_details") or []
+        ],
+    }
+    diagnostics = output / "diagnostics.log"
+    if diagnostics.is_file():
+        with diagnostics.open("rb") as log:
+            log.seek(max(0, diagnostics.stat().st_size - 16384))
+            report["diagnostics_tail"] = log.read().decode("utf-8", errors="replace")
+    encoded = json.dumps(report, ensure_ascii=False)
+    for name in ("OCR_BOT_TOKEN", "OCR_LLM_TOKEN"):
+        token = os.environ.get(name)
+        if token:
+            encoded = encoded.replace(token, "[REDACTED]")
+    directory = Path.home() / ".local" / "state" / "ocr" / "failures"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
+    with (directory / f"{run_id}-{attempt}.json").open("w") as report_file:
+        os.fchmod(report_file.fileno(), 0o600)
+        report_file.write(encoded)
 
 
 def review_payload(result, exit_code, patches, base, head, author, run_url):
@@ -261,7 +348,8 @@ def review_payload(result, exit_code, patches, base, head, author, run_url):
         f"Coverage: {len(covered)}/{len(patches)} changed files. Findings: {len(comments)}.\n\n"
     )
     if not complete:
-        summary += "**Review incomplete — no automatic approval.** Check the workflow run.\n\n"
+        summary += "**Review incomplete — no automatic approval.**\n\n"
+        summary += incomplete_diagnostics(result, exit_code) + ".\n\n"
         if delivery_failed:
             summary += "OCR reported a failed finding submission; delivery could not be verified.\n\n"
     elif not comments:
@@ -304,13 +392,17 @@ def main():
     run_url = f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     with tempfile.TemporaryDirectory(prefix="ocr-review-") as temporary:
         root = Path(temporary)
-        repo, merge_base, patches = prepare_repository(root, repository, base, head, token)
+        repo, merge_base, patches = prepare_repository(
+            root, repository, base, head, token, pr["base"]["repo"]["id"],
+        )
         output = root / "output"
         output.mkdir()
         result, exit_code = run_ocr(repo, output, Path(os.environ["OCR_ACTION_PATH"]), merge_base, head)
         payload, complete = review_payload(
             result, exit_code, patches, merge_base, head, pr["user"]["login"], run_url,
         )
+        if not complete:
+            save_failure_report(result, exit_code, output)
         current = api(pr_path, token)
         if current["state"] != "open" or current["head"]["sha"] != head or current["base"]["sha"] != base:
             print("PR changed during review; discarding the superseded result.")
@@ -318,7 +410,7 @@ def main():
         review = api(pr_path + "/reviews", token, payload)
         print(f"Submitted {payload['event']} as {BOT}: {review['html_url']}")
         if not complete:
-            raise RuntimeError("OCR review was incomplete; a COMMENT/REQUEST_CHANGES review was posted")
+            raise RuntimeError("OCR review incomplete: " + incomplete_diagnostics(result, exit_code))
 
 
 if __name__ == "__main__":

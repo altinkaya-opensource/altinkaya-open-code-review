@@ -168,6 +168,51 @@ class ReviewPolicyTests(unittest.TestCase):
         self.assertEqual(self.payload(result)[0]["event"], "APPROVE")
 
 
+class FailureDiagnosticsTests(unittest.TestCase):
+    def test_public_reason_has_categories_without_private_error_text(self):
+        result = complete_result()
+        result["status"] = "failed"
+        result["manifest"]["terminal_state"] = "failed"
+        result["manifest"]["coverage"]["completed"] = []
+        result["manifest"]["coverage"]["failed"] = [
+            {"path": "example.py", "classification": "provider", "reason": "PRIVATE_ERROR"},
+        ]
+        text = review.incomplete_diagnostics(result, 1)
+        self.assertIn("provider=1", text)
+        self.assertIn("OCR exit: 1", text)
+        self.assertNotIn("PRIVATE_ERROR", text)
+        self.assertNotIn("example.py", text)
+
+    def test_untrusted_failure_categories_are_not_printed(self):
+        result = {"status": "PRIVATE_STATUS", "manifest": {
+            "run_failure": {"classification": "PRIVATE_CATEGORY", "reason": "PRIVATE_REASON"},
+        }}
+        text = review.incomplete_diagnostics(result, 2)
+        self.assertNotIn("PRIVATE", text)
+        self.assertIn("run failure: unknown", text)
+
+    def test_failure_report_is_private_and_redacts_credentials(self):
+        result = {"status": "failed", "manifest": {"run_failure": {
+            "classification": "provider", "reason": "failure with fake-secret",
+        }}, "tool_calls": {"failure_details": [
+            {"tool_name": "file_read", "error": "failed", "arguments": "DO_NOT_SAVE_ARGUMENTS"},
+        ]}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            output.mkdir()
+            (output / "diagnostics.log").write_text("fake-secret private diagnostic")
+            env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "OCR_LLM_TOKEN": "fake-secret"}
+            with patch.dict(os.environ, env), patch.object(review.Path, "home", return_value=root):
+                review.save_failure_report(result, 1, output)
+            report = root / ".local/state/ocr/failures/123-2.json"
+            self.assertEqual(report.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(report.parent.stat().st_mode & 0o777, 0o700)
+            self.assertNotIn("fake-secret", report.read_text())
+            self.assertNotIn("DO_NOT_SAVE_ARGUMENTS", report.read_text())
+            self.assertIn("[REDACTED]", report.read_text())
+
+
 class ReasoningConfigTests(unittest.TestCase):
     def test_supported_values_reach_config_without_writing_credentials(self):
         for effort in ("minimal", "low", "medium", "high", "max", " HIGH ", ""):
@@ -247,7 +292,7 @@ class EventTests(unittest.TestCase):
 
     def test_superseded_result_is_not_posted(self):
         import json
-        pr = {"state": "open", "base": {"sha": BASE}, "head": {"sha": HEAD}, "user": {"login": "developer"}}
+        pr = {"state": "open", "base": {"sha": BASE, "repo": {"id": 42}}, "head": {"sha": HEAD}, "user": {"login": "developer"}}
         current = copy.deepcopy(pr)
         current["head"]["sha"] = "c" * 40
         with tempfile.TemporaryDirectory() as temporary:

@@ -38,6 +38,19 @@ checksums and unexpected same-version asset replacements fail the check.
 After reviewing and merging the version PR, publish the tested commit through
 `latest` to activate the new binary. The daily check does not merge or publish it.
 
+## Repository caching and incomplete reviews
+
+Each runner keeps a local Git object cache, keyed by GitHub's numeric repository
+identity. Reviews use a fresh checkout populated from cached objects; only missing
+commits and blobs need fetching. An unchanged base/head pair can be prepared
+without contacting the Git remote. GitHub credentials are never stored in the
+cache, and the sandbox receives only the read-only review checkout.
+
+Incomplete reviews report the CLI exit code, terminal state and failure categories.
+Detailed failure evidence stays in private runner-local files for troubleshooting;
+it is not uploaded to GitHub. Runner maintenance should remove unused repository
+caches after 30 days and failure reports after 7 days.
+
 ## Checks
 
 ```sh
