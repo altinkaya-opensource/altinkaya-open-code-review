@@ -18,9 +18,10 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Review the complete PR diff as altinkaya-bot
-        uses: altinkaya-opensource/altinkaya-open-code-review/ocr@77cdfd81e57e1bc3b9f6fd4277347f7036fbd4fd
+        uses: altinkaya-opensource/altinkaya-open-code-review/ocr@509d4a803a6a2e1e94f78888316abe43cab20513
         env:
           OCR_BOT_TOKEN: ${{ secrets.OCR_BOT_TOKEN }}
           OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
           OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
           OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
+          OCR_LLM_REASONING_EFFORT: ${{ vars.OCR_LLM_REASONING_EFFORT }}
