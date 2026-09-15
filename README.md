@@ -72,3 +72,5 @@ git push --force origin refs/tags/latest
 
 Pushing to `main` alone does not move `latest`. To roll back, move the tag to
 the previous tested commit with the same commands.
+
+<!-- OCR close cancellation check -->
