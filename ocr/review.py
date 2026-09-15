@@ -18,7 +18,7 @@ SEVERITIES = {"critical", "high", "medium", "low"}
 
 
 def api(path, token, payload=None):
-    """Call only GitHub's API without leaking error bodies or credentials."""
+    """Call GitHub's REST API without exposing error bodies or credentials."""
     request = urllib.request.Request(
         API + path,
         data=json.dumps(payload).encode() if payload is not None else None,
