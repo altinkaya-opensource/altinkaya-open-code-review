@@ -136,13 +136,19 @@ def unchanged(context, request):
                for ref in context['snapshots'])
 
 
-def revision(pr, context):
+def revision(pr, context, previous=None):
     """Only code/deployment evidence changes may resolve an earlier finding."""
-    return {"head": pr["head"]["sha"], "dependencies": [
-        {"repo": ref["repo"], "number": ref["number"], "head": ref["snapshot"]["head"],
-         "repository_id": ref["snapshot"]["repository_id"], "merged": ref["snapshot"]["merged"]}
-        for ref in context["snapshots"]
-    ]}
+    previous = previous or {}
+    retained = previous.get("evidence", {}).get("dependencies", []) if previous.get("head") == pr["head"]["sha"] else []
+    dependencies = {(item["repo"], item["number"]): dict(item) for item in retained}
+    for ref in context["snapshots"]:
+        dependencies[(ref["repo"], ref["number"])] = {
+            "repo": ref["repo"], "number": ref["number"], "head": ref["snapshot"]["head"],
+            "repository_id": ref["snapshot"]["repository_id"], "merged": ref["snapshot"]["merged"],
+            "state": ref["snapshot"]["state"],
+        }
+    # Removing a link is not evidence that a previously reported problem was fixed.
+    return {"head": pr["head"]["sha"], "dependencies": [dependencies[key] for key in sorted(dependencies)]}
 
 
 def render(context):

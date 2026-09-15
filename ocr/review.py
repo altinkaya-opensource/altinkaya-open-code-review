@@ -390,9 +390,11 @@ def tracked_payload(result, exit_code, patches, base, head, author, run_url, pre
     result = {**result, "comments": comments}
     payload, covered = review_payload(result, exit_code, patches, base, head, author, run_url)
     complete = covered and context["complete"]
-    input_id = finding_history.digest(linked_prs.revision(pr, context))
+    evidence = linked_prs.revision(pr, context, previous)
+    input_id = finding_history.digest(evidence)
     state = finding_history.reconcile(previous, comments, pr["base"]["repo"]["id"], number, head, input_id, complete)
     state["dependencies"] = context["snapshots"]
+    state["evidence"] = evidence
     active = [item for item in state["findings"] if item["state"] == "open"]
     blocking = any(item["severity"] in {"critical", "high"} for item in active)
     payload["event"] = "REQUEST_CHANGES" if blocking else "COMMENT"

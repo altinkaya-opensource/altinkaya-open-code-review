@@ -88,6 +88,17 @@ class LinkedPRTests(unittest.TestCase):
         target["body"] = "Different explanation"
         self.assertEqual(original, linked_prs.revision(target, context))
 
+    def test_removing_a_link_does_not_count_as_a_fix_on_repeated_reruns(self):
+        target = self.target()
+        context = linked_prs.load(f"{ORG}/target", 1, target, self.request_for(pull()))
+        original = linked_prs.revision(target, context)
+        previous = {"head": HEAD, "evidence": original}
+        empty = {"snapshots": []}
+        for _ in range(3):
+            current = linked_prs.revision(target, empty, previous)
+            self.assertEqual(current, original)
+            previous = {"head": HEAD, "evidence": current}
+
     def test_foreign_organization_is_not_fetched(self):
         target = self.target()
         target["body"] = "Related-PR: https://github.com/outsider/project/pull/9"
