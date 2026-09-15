@@ -1,0 +1,10 @@
+name: Altinkaya OCR review
+description: Review a frozen PR diff in a read-only sandbox and submit a bot review.
+runs:
+  using: composite
+  steps:
+    - name: Review pull request
+      shell: bash
+      env:
+        OCR_ACTION_PATH: ${{ github.action_path }}
+      run: python3 "$OCR_ACTION_PATH/review.py"
