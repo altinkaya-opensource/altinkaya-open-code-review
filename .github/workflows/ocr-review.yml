@@ -1,0 +1,26 @@
+name: OCR review
+on:
+  workflow_call:
+    secrets:
+      OCR_BOT_TOKEN:
+        required: true
+      OCR_LLM_TOKEN:
+        required: true
+permissions:
+  contents: read
+jobs:
+  review:
+    if: github.event_name == 'pull_request_target' && github.repository_owner == 'altinkaya-opensource'
+    runs-on: [self-hosted, linux, x64, ocr]
+    timeout-minutes: 60
+    concurrency:
+      group: ocr-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Review the complete PR diff as altinkaya-bot
+        uses: altinkaya-opensource/altinkaya-open-code-review/ocr@77cdfd81e57e1bc3b9f6fd4277347f7036fbd4fd
+        env:
+          OCR_BOT_TOKEN: ${{ secrets.OCR_BOT_TOKEN }}
+          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
+          OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
+          OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
