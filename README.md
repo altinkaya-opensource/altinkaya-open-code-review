@@ -22,3 +22,19 @@ This controls the model's `reasoning_effort` request field. OCR's separate
 ```sh
 python3 -m unittest discover -s ocr -p 'test_*.py'
 ```
+
+## Publishing updates
+
+Consumers reference the reusable workflow with `@latest`. The workflow also
+loads this repository's action through `@latest`, so consuming repositories
+do not need an update for each release.
+
+After the selected commit passes its checks, publish it by moving the tag:
+
+```sh
+git tag -f latest <tested-commit>
+git push --force origin refs/tags/latest
+```
+
+Pushing to `main` alone does not move `latest`. To roll back, move the tag to
+the previous tested commit with the same commands.
