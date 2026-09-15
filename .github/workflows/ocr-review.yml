@@ -8,6 +8,7 @@ on:
         required: true
 permissions:
   contents: read
+  checks: write
 jobs:
   review:
     if: (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && github.repository_owner == 'altinkaya-opensource'
@@ -20,6 +21,7 @@ jobs:
       - name: Review the complete PR diff as altinkaya-bot
         uses: altinkaya-opensource/altinkaya-open-code-review/ocr@latest
         env:
+          OCR_CHECK_TOKEN: ${{ github.token }}
           OCR_BOT_TOKEN: ${{ secrets.OCR_BOT_TOKEN }}
           OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
           OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}

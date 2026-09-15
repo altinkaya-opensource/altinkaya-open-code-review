@@ -121,9 +121,10 @@ class FindingHistoryTests(unittest.TestCase):
         context = {"snapshots": [], "warnings": [], "complete": True}
         fingerprint = history.digest(review.linked_prs.revision(pr, context))
         previous = history.reconcile({"findings": []}, [history.identify(finding(), [])], 42, 1, HEAD, fingerprint, True)
-        payload, complete = review.tracked_payload(complete_result(), 0, PATCHES, BASE, HEAD,
+        payload, complete, active_count = review.tracked_payload(complete_result(), 0, PATCHES, BASE, HEAD,
                                                   "developer", "https://github.com/run", previous, context, pr, 1)
         self.assertTrue(complete)
+        self.assertEqual(active_count, 1)
         self.assertEqual(payload["event"], "REQUEST_CHANGES")
         self.assertIn("earlier findings remain open", payload["body"])
 
@@ -132,9 +133,10 @@ class FindingHistoryTests(unittest.TestCase):
         context = {"snapshots": [], "warnings": ["Context unavailable"], "complete": False}
         result = complete_result()
         result["manifest"]["input"]["resolved_head"] = NEXT
-        payload, complete = review.tracked_payload(result, 0, PATCHES, BASE, NEXT, "developer",
+        payload, complete, active_count = review.tracked_payload(result, 0, PATCHES, BASE, NEXT, "developer",
             "https://github.com/run", state_with_finding(), context, pr, 1)
         self.assertFalse(complete)
+        self.assertEqual(active_count, 1)
         self.assertEqual(payload["event"], "REQUEST_CHANGES")
         self.assertIn("Related context incomplete", payload["body"])
 

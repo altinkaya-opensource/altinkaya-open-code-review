@@ -7,6 +7,10 @@ Automatic pull request reviews powered by [Alibaba's Open Code Review (OCR)](htt
 - Critical and high findings request changes.
 - Medium and low findings produce comments.
 - Clean reviews approve only when the complete diff was reviewed.
+- The **OCR result** check is neutral (gray) when a complete review has open
+  findings, successful (green) when none remain, and failed (red) when the review
+  is incomplete or errors. Retained findings from earlier reviews also count.
+  The Actions execution job and GitHub's native review decision remain separate.
 - Findings on changed lines are posted as inline comments.
 - Review summaries end with reported input/output tokens, cache hit rate, and OCR duration.
   Missing metrics are omitted. Cache hit rate is reported cached input divided by
@@ -45,6 +49,12 @@ the stale result and queues a fresh review.
 The caller must subscribe to `edited` and declare the `workflow_dispatch` string
 input `pull_request_number`, as shown in `automatic-ocr-review.yml`. The input
 can also be used to request a fresh review manually.
+
+The caller must grant `checks: write` as well as `contents: read`. The reusable
+workflow uses the short-lived job token for the result check; this token never
+enters the OCR sandbox. Superseded or closed PR reviews do not publish a new
+result check. Result checks are created when analysis finishes, so cancellation
+does not leave an extra pending check behind.
 
 ## Finding history
 

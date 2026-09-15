@@ -298,7 +298,7 @@ def save_failure_report(result, exit_code, output):
             log.seek(max(0, diagnostics.stat().st_size - 16384))
             report["diagnostics_tail"] = log.read().decode("utf-8", errors="replace")
     encoded = json.dumps(report, ensure_ascii=False)
-    for name in ("OCR_BOT_TOKEN", "OCR_LLM_TOKEN"):
+    for name in ("OCR_BOT_TOKEN", "OCR_LLM_TOKEN", "OCR_CHECK_TOKEN"):
         token = os.environ.get(name)
         if token:
             encoded = encoded.replace(token, "[REDACTED]")
@@ -416,7 +416,27 @@ def tracked_payload(result, exit_code, patches, base, head, author, run_url, pre
             if resolved is None:
                 raise
             state["findings"].remove(resolved)
-    return payload, complete
+    return payload, complete, len(active)
+
+
+def publish_check(repository, head, run_url, conclusion, active_count=None):
+    """Publish the review outcome using the job token, never the bot's classic PAT."""
+    token = os.environ.get("OCR_CHECK_TOKEN")
+    if not token:
+        # Older queued workflow versions do not supply a checks-capable token.
+        print("OCR result check skipped: this workflow did not supply OCR_CHECK_TOKEN.")
+        return
+    title = {
+        "success": "Review complete: no open findings",
+        "neutral": f"Review complete: {active_count} open finding(s)",
+        "failure": "Review incomplete or failed",
+    }[conclusion]
+    api(f"/repos/{repository}/check-runs", token, {
+        "name": "OCR result", "head_sha": head, "status": "completed",
+        "conclusion": conclusion, "details_url": run_url,
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "output": {"title": title, "summary": f"{title}. [Workflow run]({run_url})"},
+    })
 
 
 def main():
@@ -461,10 +481,26 @@ def main():
     if not all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (base, head)):
         raise ValueError("Invalid commit SHA")
     run_url = f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    try:
+        active_count = review_pull_request(repository, number, identity, pr, token, run_url, request)
+    except Exception:
+        try:
+            publish_check(repository, head, run_url, "failure")
+        except Exception:
+            print("Could not publish the failed OCR result check.")
+        raise
+    if active_count is not None:
+        publish_check(repository, head, run_url, "neutral" if active_count else "success", active_count)
+
+
+def review_pull_request(repository, number, identity, pr, token, run_url, request):
+    """Return the active finding count only after publishing a fresh, complete review."""
+    pr_path = f"/repos/{repository}/pulls/{number}"
+    base, head = pr["base"]["sha"], pr["head"]["sha"]
     previous, history_revision = finding_history.load(pr_path, pr["base"]["repo"]["id"], number, request, identity["id"])
     context = linked_prs.load(repository, number, pr, request)
     background = context["text"] + finding_history.background(previous)
-    for secret_name in ("OCR_BOT_TOKEN", "OCR_LLM_TOKEN"):
+    for secret_name in ("OCR_BOT_TOKEN", "OCR_LLM_TOKEN", "OCR_CHECK_TOKEN"):
         if secret_value := os.environ.get(secret_name):
             background = background.replace(secret_value, "[REDACTED]")
     if len(background.encode()) > 100000:
@@ -477,7 +513,7 @@ def main():
         output = root / "output"
         output.mkdir()
         result, exit_code = run_ocr(repo, output, Path(os.environ["OCR_ACTION_PATH"]), merge_base, head, background)
-        payload, complete = tracked_payload(
+        payload, complete, active_count = tracked_payload(
             result, exit_code, patches, merge_base, head, pr["user"]["login"], run_url, previous, context, pr, number,
         )
         if not complete:
@@ -501,6 +537,7 @@ def main():
             if not context["complete"]:
                 raise RuntimeError("Linked PR context was incomplete; no automatic approval")
             raise RuntimeError("OCR review incomplete: " + incomplete_diagnostics(result, exit_code))
+        return active_count
 
 
 if __name__ == "__main__":
