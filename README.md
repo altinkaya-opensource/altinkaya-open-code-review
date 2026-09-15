@@ -1,6 +1,6 @@
 # Open Code Review
 
-Automatic pull request reviews using the OCR CLI.
+Automatic pull request reviews powered by [Alibaba's Open Code Review (OCR)](https://github.com/alibaba/open-code-review).
 
 - Reviews run when a pull request is opened, reopened, or updated.
 - Critical and high findings request changes.
