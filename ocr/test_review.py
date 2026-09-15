@@ -138,7 +138,8 @@ class ReviewPolicyTests(unittest.TestCase):
 
     def test_sandbox_has_no_host_home_or_root_mount(self):
         command = review.sandbox_command(
-            Path("/tmp/repo"), Path("/tmp/out"), Path("/tmp/action"), BASE, HEAD, Path("/tmp/config.json"),
+            Path("/tmp/repo"), Path("/tmp/out"), Path("/tmp/action"), BASE, HEAD,
+            Path("/tmp/config.json"), Path("/tmp/ocr"),
         )
         self.assertNotIn("/root", command)
         self.assertNotIn("/home/ocr-runner", command)
@@ -185,6 +186,7 @@ class ReasoningConfigTests(unittest.TestCase):
                 self.assertEqual(config["llm"]["url"], env["OCR_LLM_URL"])
                 self.assertEqual(config["llm"]["model"], env["OCR_LLM_MODEL"])
                 self.assertFalse(config["llm"]["use_anthropic"])
+                self.assertEqual(config["llm"]["timeout_sec"], 600)
                 self.assertEqual(config["language"], "English")
                 self.assertFalse(config["telemetry"]["enabled"])
                 if effort.strip():
@@ -199,6 +201,40 @@ class ReasoningConfigTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     review.write_ocr_config(Path(temporary), destination)
             self.assertFalse(destination.exists())
+
+
+class MetricsTests(unittest.TestCase):
+    def test_available_metrics_are_added_at_the_bottom(self):
+        result = complete_result()
+        result["summary"] = {"input_tokens": 12500, "output_tokens": 2345, "cache_read_tokens": 10000}
+        result["manifest"]["elapsed_ms"] = 61000
+        body = review.review_payload(result, 0, PATCHES, BASE, HEAD, "developer", "https://github.com/run")[0]["body"]
+        self.assertIn("Input tokens **12,500**", body)
+        self.assertIn("Output tokens **2,345**", body)
+        self.assertIn("Cache hit **80.0%**", body)
+        self.assertIn("OCR time **1m 1s**", body)
+        self.assertGreater(body.index("**Metrics:**"), body.index("Workflow run"))
+
+    def test_missing_values_are_omitted_without_placeholders(self):
+        metrics = review.review_metrics({"summary": {"input_tokens": 42}})
+        self.assertIn("Input tokens **42**", metrics)
+        for text in ("Output", "Cache", "OCR time", "n/a", "N/A"):
+            self.assertNotIn(text, metrics)
+        self.assertEqual(review.review_metrics({}), "")
+
+    def test_reported_zero_cache_is_different_from_missing_cache(self):
+        self.assertIn("Cache hit **0.0%**", review.review_metrics({"summary": {"input_tokens": 100, "cache_read_tokens": 0}}))
+        self.assertNotIn("Cache", review.review_metrics({"summary": {"input_tokens": 100}}))
+
+    def test_zero_denominator_and_inconsistent_cache_are_not_percentages(self):
+        for inputs, cached in ((0, 0), (100, 101)):
+            metrics = review.review_metrics({"summary": {"input_tokens": inputs, "cache_read_tokens": cached}})
+            self.assertNotIn("Cache", metrics)
+
+    def test_invalid_counters_are_not_rendered(self):
+        result = {"summary": {"input_tokens": -1, "output_tokens": "text", "cache_read_tokens": True},
+                  "manifest": {"elapsed_ms": -1}}
+        self.assertEqual(review.review_metrics(result), "")
 
 
 class EventTests(unittest.TestCase):

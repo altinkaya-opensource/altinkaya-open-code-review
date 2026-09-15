@@ -1,0 +1,44 @@
+name: Check upstream OCR release
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ocr-version-update
+  cancel-in-progress: false
+jobs:
+  update:
+    if: github.repository == 'altinkaya-opensource/altinkaya-open-code-review' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, ocr]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the latest stable release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.OCR_BOT_TOKEN }}
+        run: python3 ocr/check_upstream.py
+      - name: Create or update the version pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.OCR_BOT_TOKEN }}
+          branch: codex/ocr-version-update
+          base: main
+          delete-branch: true
+          add-paths: ocr/version.json
+          commit-message: 'build: update OCR to v${{ steps.upstream.outputs.version }}'
+          title: 'build: update OCR to v${{ steps.upstream.outputs.version }}'
+          author: ${{ steps.upstream.outputs.bot_committer }}
+          committer: ${{ steps.upstream.outputs.bot_committer }}
+          body: |
+            Updates the OCR version pin and official Linux binary checksum.
+
+            [Upstream release](${{ steps.upstream.outputs.release_url }})
+
+            After merging, publish the tested commit through the `latest` tag to activate it.

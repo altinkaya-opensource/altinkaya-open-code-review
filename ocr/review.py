@@ -10,6 +10,8 @@ import tempfile
 import urllib.error
 import urllib.request
 
+from ocr_binary import resolve_binary
+
 
 API = "https://api.github.com"
 ORGANIZATION = "altinkaya-opensource"
@@ -109,7 +111,7 @@ def prepare_repository(root, repository, base, head, token):
     return repo, merge_base, patches
 
 
-def sandbox_command(repo, output, action, base, head, config_path):
+def sandbox_command(repo, output, action, base, head, config_path, binary_path):
     """Expose only OS tools, read-only PR files, and a fresh writable result directory."""
     return [
         "bwrap", "--die-with-parent", "--new-session", "--unshare-all", "--share-net",
@@ -121,9 +123,10 @@ def sandbox_command(repo, output, action, base, head, config_path):
         "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
         "--dir", "/home/ocr/.opencodereview",
         "--ro-bind", str(config_path), "/home/ocr/.opencodereview/config.json",
+        "--ro-bind", str(binary_path), "/ocr",
         "--ro-bind", str(repo), "/work", "--bind", str(output), "/output",
         "--ro-bind", str(action / "rules.json"), "/rules.json",
-        "--chdir", "/work", "/usr/local/bin/ocr", "review",
+        "--chdir", "/work", "/ocr", "review",
         "--audience", "agent", "--format", "json", "--output", "/output/review.json",
         "--from", base, "--to", head, "--rule", "/rules.json", "--concurrency", "4",
         "--background", "Review this pull request for concrete regressions in its full diff. "
@@ -145,6 +148,7 @@ def write_ocr_config(action, destination):
         "model": os.environ["OCR_LLM_MODEL"],
         "auth_token_cmd": 'printf "%s" "$OCR_LLM_TOKEN"',
         "use_anthropic": False,
+        "timeout_sec": 600,
     }
     if effort:
         config["llm"]["extra_body"] = {"reasoning_effort": effort}
@@ -164,16 +168,44 @@ def run_ocr(repo, output, action, base, head):
     }
     config_path = output.parent / "ocr-config.json"
     write_ocr_config(action, config_path)
+    binary_path = resolve_binary(action)
     # Raw LLM output and diagnostics can contain source; keep them out of public logs.
     with (output / "diagnostics.log").open("w") as diagnostics:
         result = subprocess.run(
-            sandbox_command(repo, output, action, base, head, config_path), env=env,
+            sandbox_command(repo, output, action, base, head, config_path, binary_path), env=env,
             stdout=diagnostics, stderr=subprocess.STDOUT, check=False,
         )
     result_file = output / "review.json"
     if not result_file.is_file():
         raise RuntimeError(f"OCR produced no JSON result (exit {result.returncode})")
     return json.loads(result_file.read_text()), result.returncode
+
+
+def review_metrics(result):
+    """Render only available metrics, without placeholders for missing values."""
+    summary = result.get("summary") or {}
+    values = {}
+    for name in ("input_tokens", "output_tokens", "cache_read_tokens"):
+        value = summary.get(name)
+        values[name] = value if type(value) is int and value >= 0 else None
+    inputs = values["input_tokens"]
+    outputs = values["output_tokens"]
+    cached = values["cache_read_tokens"]
+    parts = []
+    if inputs is not None:
+        parts.append(f"Input tokens **{inputs:,}**")
+    if outputs is not None:
+        parts.append(f"Output tokens **{outputs:,}**")
+    if inputs and cached is not None and cached <= inputs:
+        parts.append(f"Cache hit **{100 * cached / inputs:.1f}%**")
+    elapsed = (result.get("manifest") or {}).get("elapsed_ms")
+    if type(elapsed) is int and elapsed >= 0:
+        seconds = elapsed // 1000
+        hours, seconds = divmod(seconds, 3600)
+        minutes, seconds = divmod(seconds, 60)
+        duration = (f"{hours}h " if hours else "") + (f"{minutes}m " if minutes else "") + f"{seconds}s"
+        parts.append(f"OCR time **{duration}**")
+    return "---\n**Metrics:** " + " · ".join(parts) if parts else ""
 
 
 def review_payload(result, exit_code, patches, base, head, author, run_url):
@@ -237,7 +269,11 @@ def review_payload(result, exit_code, patches, base, head, author, run_url):
     if author == BOT:
         summary += "The PR author is altinkaya-bot; GitHub requires another account for approval.\n\n"
     summary += "\n\n".join(unpositioned)
-    summary += f"\n\n[Workflow run]({run_url})\n\n<!-- altinkaya-ocr:{head} -->"
+    summary += f"\n\n[Workflow run]({run_url})"
+    metrics = review_metrics(result)
+    if metrics:
+        summary += f"\n\n{metrics}"
+    summary += f"\n\n<!-- altinkaya-ocr:{head} -->"
     if len(summary) > 60000 or any(len(item["body"]) > 60000 for item in inline):
         raise ValueError("Review exceeds GitHub limits; refusing to discard findings")
     return {"commit_id": head, "event": event, "body": summary, "comments": inline}, complete
