@@ -181,6 +181,10 @@ class ReviewPolicyTests(unittest.TestCase):
         self.assertNotIn("/", command)
         self.assertIn("--unshare-all", command)
         self.assertIn("--die-with-parent", command)
+        # A single pass must not inherit the old 15-minute per-round setting:
+        # OCR previously allowed 15 * 2 = 30 minutes for the complete group.
+        self.assertEqual(command[command.index("--effort") + 1], "low")
+        self.assertEqual(command[command.index("--timeout") + 1], "30")
 
     def test_failed_comment_submission_never_approves_complete_coverage(self):
         for tool_calls in (

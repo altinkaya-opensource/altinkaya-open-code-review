@@ -133,6 +133,17 @@ and provider must support the selected value.
 This controls the model's `reasoning_effort` request field. OCR's separate
 `--effort` option controls the number of review rounds.
 
+Automatic reviews use `--effort low`: at most one review round per file group.
+This does not lower the configured model reasoning effort. Review rules focus
+on concrete regressions in the selected diff, direct callers, linked contracts
+and previous findings; they discourage unrelated audits and repeated exploration.
+These scope instructions guide the model, not a hard cap on tool calls.
+
+The workflow explicitly uses `--timeout 30` to retain the previous effective
+30-minute group deadline when reducing OCR from two rounds to one. The pinned
+CLI multiplies its timeout by the round count. Reducing rounds therefore does
+not accidentally halve the time available to finish the first pass.
+
 Each LLM HTTP request has a 600-second timeout. The review-group and workflow-job
 timeouts are separate limits.
 

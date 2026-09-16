@@ -19,6 +19,8 @@ We share our setup as a reference for teams running their own review infrastruct
 
 ## Review policy
 
+Reviews use one pass, focused on changed behavior and directly affected callers.
+
 | Finding | GitHub review | OCR result |
 | --- | --- | --- |
 | Critical / High | Request changes | Gray |
