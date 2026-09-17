@@ -18,6 +18,7 @@ import dependent_reviews
 import finding_history
 import linked_prs
 import repository_cache
+import pr_agent_engine
 
 
 API = "https://api.github.com"
@@ -246,7 +247,8 @@ def review_metrics(result):
         hours, seconds = divmod(seconds, 3600)
         minutes, seconds = divmod(seconds, 60)
         duration = (f"{hours}h " if hours else "") + (f"{minutes}m " if minutes else "") + f"{seconds}s"
-        parts.append(f"OCR time **{duration}**")
+        label = "PR-Agent" if result.get("engine") == "PR-Agent" else "OCR"
+        parts.append(f"{label} time **{duration}**")
     return "---\n**Metrics:** " + " · ".join(parts) if parts else ""
 
 
@@ -366,8 +368,9 @@ def review_payload(result, exit_code, patches, base, head, author, run_url):
         event = "APPROVE"
     if author == BOT:
         event = "COMMENT"  # GitHub disallows approving/requesting changes on one's own PR.
+    label = "PR-Agent" if result.get("engine") == "PR-Agent" else "Open Code Review"
     summary = (
-        f"## Open Code Review\n\n"
+        f"## {label}\n\n"
         f"Commit: `{head}`\n\n"
         f"Coverage: {len(covered)}/{len(selected)} selected files "
         f"({len(patches)} changed; {len(set(patches) - selected)} excluded). Findings: {finding_count}.\n\n"
@@ -449,7 +452,8 @@ def publish_check(repository, head, run_url, conclusion, active_count=None):
         "failure": "Review incomplete or failed",
     }[conclusion]
     api(f"/repos/{repository}/check-runs", token, {
-        "name": "OCR result", "head_sha": head, "status": "completed",
+        "name": "PR-Agent result" if os.environ.get("OCR_REVIEW_ENGINE") == "pr-agent" else "OCR result",
+        "head_sha": head, "status": "completed",
         "conclusion": conclusion, "details_url": run_url,
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "output": {"title": title, "summary": f"{title}. [Workflow run]({run_url})"},
@@ -529,7 +533,14 @@ def review_pull_request(repository, number, identity, pr, token, run_url, reques
         )
         output = root / "output"
         output.mkdir()
-        result, exit_code = run_ocr(repo, output, Path(os.environ["OCR_ACTION_PATH"]), merge_base, head, background)
+        engine = os.environ.get("OCR_REVIEW_ENGINE", "") or "ocr"
+        if engine not in {"ocr", "pr-agent"}:
+            raise ValueError("Unknown review engine")
+        action = Path(os.environ["OCR_ACTION_PATH"])
+        if engine == "pr-agent":
+            result, exit_code = pr_agent_engine.run(repo, output, action, merge_base, head, patches, background)
+        else:
+            result, exit_code = run_ocr(repo, output, action, merge_base, head, background)
         payload, complete, active_count = tracked_payload(
             result, exit_code, patches, merge_base, head, pr["user"]["login"], run_url, previous, context, pr, number,
         )
