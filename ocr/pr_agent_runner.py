@@ -20,8 +20,11 @@ def provider_base_url(value):
 
 def convert_findings(data):
     """Use explicit per-finding severity without changing upstream's output schema."""
+    findings = data["review"]["key_issues_to_review"]
+    if not isinstance(findings, list):
+        raise ValueError("PR-Agent findings must be an array")
     comments = []
-    for finding in data["review"]["key_issues_to_review"]:
+    for finding in findings:
         match = re.fullmatch(r"\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s*(.+)", finding["issue_header"], re.DOTALL)
         if not match:
             raise ValueError("PR-Agent finding has no explicit severity")
@@ -133,6 +136,8 @@ async def review(inputs):
         """Let upstream's bounded fallback retry malformed severity labels too."""
         def _load_valid_review_yaml(self, prediction, *args, **kwargs):
             data = super()._load_valid_review_yaml(prediction, *args, **kwargs)
+            if not self._validate_review_schema(data):
+                raise ValueError("PR-Agent review schema is invalid")
             convert_findings(data)
             return data
 
@@ -149,7 +154,8 @@ async def review(inputs):
         if selected:
             await reviewer.run()
             data = reviewer.prediction_data or reviewer._load_valid_review_yaml(reviewer.prediction, source="adapter")
-            reviewer._validate_review_schema(data)
+            if not reviewer._validate_review_schema(data):
+                raise ValueError("PR-Agent merged review schema is invalid")
             comments = convert_findings(data)
             if hasattr(reviewer, "_chunked_patches_diff_list"):
                 completed = set()

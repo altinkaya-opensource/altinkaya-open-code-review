@@ -33,6 +33,10 @@ class PRAgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pr_agent_runner.convert_findings({"review": {"key_issues_to_review": [{"issue_header": "Bug"}]}})
 
+    def test_malformed_empty_findings_are_not_clean(self):
+        with self.assertRaises(ValueError):
+            pr_agent_runner.convert_findings({"review": {"key_issues_to_review": {}}})
+
     def test_missing_chunk_never_approves(self):
         result = pr_agent_runner.build_result({"base": "a", "head": "b"}, {"one", "two"}, {"one"}, [], {}, 1)
         payload, complete = review.review_payload(result, 0, {"one": "", "two": ""}, "a", "b", "author", "url")
