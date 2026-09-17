@@ -11,7 +11,6 @@ permissions:
   checks: write
 jobs:
   review:
-    name: ${{ vars.OCR_REVIEW_ENGINE == 'pr-agent' && 'PR-Agent review' || 'review' }}
     if: (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && github.repository_owner == 'altinkaya-opensource'
     runs-on: [self-hosted, linux, x64, ocr]
     timeout-minutes: 60
@@ -22,7 +21,6 @@ jobs:
       - name: Review the selected PR files as altinkaya-bot
         uses: altinkaya-opensource/altinkaya-open-code-review/ocr@latest
         env:
-          OCR_REVIEW_ENGINE: ${{ vars.OCR_REVIEW_ENGINE }}
           OCR_CHECK_TOKEN: ${{ github.token }}
           OCR_BOT_TOKEN: ${{ secrets.OCR_BOT_TOKEN }}
           OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}

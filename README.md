@@ -5,8 +5,7 @@
 # Altinkaya Open Code Review
 
 AI-assisted pull request reviews for GitHub, powered by
-[Alibaba's Open Code Review](https://github.com/alibaba/open-code-review) or
-[PR-Agent](https://github.com/The-PR-Agent/pr-agent).
+[Alibaba's Open Code Review](https://github.com/alibaba/open-code-review).
 We share our setup as a reference for teams running their own review infrastructure.
 
 [Technical guide](docs/guide.md) · [Workflow](.github/workflows/ocr-review.yml) · [Contribute](#contribute)
@@ -21,9 +20,6 @@ We share our setup as a reference for teams running their own review infrastruct
 ## Review policy
 
 Reviews use one pass, focused on changed behavior and directly affected callers.
-Repositories can opt into PR-Agent with `OCR_REVIEW_ENGINE=pr-agent`.
-It reviews bounded diff chunks with the same bot policy, sandbox and finding history.
-See the [PR-Agent setup](docs/pr-agent.md).
 
 | Finding | GitHub review | OCR result |
 | --- | --- | --- |
@@ -67,5 +63,4 @@ python3 -m unittest discover -s ocr -p 'test_*.py'
 ```
 
 Built by [Altinkaya](https://github.com/altinkaya-opensource).
-Review engines: [Alibaba Open Code Review](https://github.com/alibaba/open-code-review)
-and [PR-Agent](https://github.com/The-PR-Agent/pr-agent).
+The review engine comes from [Alibaba Open Code Review](https://github.com/alibaba/open-code-review).
